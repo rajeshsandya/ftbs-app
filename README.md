@@ -44,3 +44,15 @@ The file App Store Connect expects is an exported signed `.ipa`, not the source 
 4. In Organizer, choose **Distribute App** and export for **App Store Connect**.
 5. If you prefer command-line export, use `ExportOptions-AppStore.plist` with `xcodebuild -exportArchive` after creating an archive.
 
+## App Encryption / Export Compliance
+
+This app uses only standard Apple-provided encryption through the operating system and framework APIs. It does not contain custom cryptography, third-party encryption libraries, or user-facing secure messaging features.
+
+### App Store Connect answer
+
+- **Uses encryption:** Yes, via Apple system services only
+- **Uses non-exempt encryption:** No
+- **Export compliance key:** `ITSAppUsesNonExemptEncryption = NO`
+
+This is also set in the Xcode build settings for both Debug and Release configurations.
+

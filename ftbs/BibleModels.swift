@@ -54,6 +54,66 @@ enum SearchScope: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum VerseHighlightColor: String, CaseIterable, Identifiable, Codable, Sendable {
+    case yellow
+    case green
+    case blue
+    case pink
+    case orange
+    case purple
+    case red
+    case gray
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .yellow: return "Yellow"
+        case .green: return "Green"
+        case .blue: return "Blue"
+        case .pink: return "Pink"
+        case .orange: return "Orange"
+        case .purple: return "Purple"
+        case .red: return "Red"
+        case .gray: return "Gray"
+        }
+    }
+}
+
+struct VerseAnnotation: Codable, Hashable, Sendable {
+    let language: BibleLanguage
+    let bookNumber: Int
+    let chapterNumber: Int
+    let verseNumber: Int
+    var highlightColor: VerseHighlightColor?
+    var note: String?
+    var updatedAt: Date
+
+    init(
+        language: BibleLanguage,
+        bookNumber: Int,
+        chapterNumber: Int,
+        verseNumber: Int,
+        highlightColor: VerseHighlightColor? = nil,
+        note: String? = nil,
+        updatedAt: Date = .now
+    ) {
+        self.language = language
+        self.bookNumber = bookNumber
+        self.chapterNumber = chapterNumber
+        self.verseNumber = verseNumber
+        self.highlightColor = highlightColor
+        self.note = note
+        self.updatedAt = updatedAt
+    }
+
+    var id: String { key }
+
+    var key: String {
+        "\(language.rawValue)-\(bookNumber)-\(chapterNumber)-\(verseNumber)"
+    }
+}
+
 struct BibleDocument: Codable, Sendable {
     let books: [BibleBook]
 }
