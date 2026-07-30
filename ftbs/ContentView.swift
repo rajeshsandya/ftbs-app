@@ -1216,29 +1216,34 @@ private struct SearchControls: View {
     @ObservedObject var viewModel: BibleViewModel
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @FocusState private var isSearchFieldFocused: Bool
 
     private var theme: FTBSTheme { FTBSTheme(colorScheme) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            ViewThatFits(in: .vertical) {
-                HStack(spacing: 10) {
-                    searchLabelAndField
-                    scopePicker
-                    actionButtons
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    searchLabelAndField
-                    scopePicker
-                    actionButtons
-                }
-
-                VStack(alignment: .leading, spacing: 8) {
-                    searchLabelAndField
+            if isCompactLayout {
+                compactSearchHeader
+            } else {
+                ViewThatFits(in: .vertical) {
                     HStack(spacing: 10) {
+                        searchLabelAndField
                         scopePicker
                         actionButtons
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        searchLabelAndField
+                        scopePicker
+                        actionButtons
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        searchLabelAndField
+                        HStack(spacing: 10) {
+                            scopePicker
+                            actionButtons
+                        }
                     }
                 }
             }
@@ -1246,6 +1251,111 @@ private struct SearchControls: View {
         .padding(.vertical, 8)
         .padding(.horizontal, 12)
         .background(theme.muted, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .onAppear {
+            isSearchFieldFocused = true
+        }
+    }
+
+    private var compactSearchHeader: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Search at least 2 characters", text: $viewModel.searchQuery)
+                .textFieldStyle(.plain)
+                .font(.headline)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(theme.surface, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(theme.stroke.opacity(0.85), lineWidth: 1)
+                }
+                .focused($isSearchFieldFocused)
+                .submitLabel(.search)
+                .onChange(of: viewModel.searchQuery) { _, _ in
+                    viewModel.performSearch()
+                }
+                .onSubmit {
+                    viewModel.performSearch()
+                }
+
+            compactFilterBar
+
+            Button {
+                viewModel.performSearch()
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                    Text("Search")
+                }
+                .font(.subheadline.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .foregroundStyle(.white)
+                .background(Color.white.opacity(0.12))
+                .clipShape(Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(red: 0.04, green: 0.04, blue: 0.06),
+                            Color(red: 0.10, green: 0.10, blue: 0.12),
+                            Color(red: 0.16, green: 0.16, blue: 0.18)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 22, style: .continuous)
+                .stroke(Color.white.opacity(0.10), lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.18), radius: 8, x: 0, y: 3)
+    }
+
+    private var compactFilterBar: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Filter by scope")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.80))
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(SearchScope.allCases) { scope in
+                        Button {
+                            viewModel.searchScope = scope
+                            viewModel.performSearch()
+                        } label: {
+                            Text(scope.rawValue)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(viewModel.searchScope == scope ? .black : .white.opacity(0.88))
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 9)
+                                .background {
+                                    Capsule()
+                                        .fill(viewModel.searchScope == scope ? Color.white : Color.white.opacity(0.10))
+                                }
+                                .overlay {
+                                    Capsule()
+                                        .stroke(viewModel.searchScope == scope ? Color.white.opacity(0.15) : Color.white.opacity(0.18), lineWidth: 1)
+                                }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
     }
 
     private var searchLabelAndField: some View {
@@ -1258,13 +1368,17 @@ private struct SearchControls: View {
     }
 
     private var searchField: some View {
-        TextField("Search at least 3 characters", text: $viewModel.searchQuery)
+        TextField("Search at least 2 characters", text: $viewModel.searchQuery)
             .textFieldStyle(.roundedBorder)
             .padding(8)
             .background(theme.surface, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .frame(maxWidth: .infinity)
             .layoutPriority(1)
+            .focused($isSearchFieldFocused)
             .submitLabel(.search)
+            .onChange(of: viewModel.searchQuery) { _, _ in
+                viewModel.performSearch()
+            }
             .onSubmit {
                 viewModel.performSearch()
             }
@@ -1278,21 +1392,13 @@ private struct SearchControls: View {
         }
         .pickerStyle(.menu)
         .fixedSize()
+        .onChange(of: viewModel.searchScope) { _, _ in
+            viewModel.performSearch()
+        }
     }
 
     private var actionButtons: some View {
         HStack(spacing: 10) {
-            Button {
-                viewModel.performSearch()
-            } label: {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: isCompactLayout ? 18 : 16, weight: .semibold))
-                    .frame(width: isCompactLayout ? 44 : 36, height: isCompactLayout ? 44 : 36)
-            }
-            .buttonStyle(.borderedProminent)
-            .fixedSize()
-            .accessibilityLabel("Search")
-
             if viewModel.showingSearchResults || !viewModel.searchQuery.isEmpty {
                 Button {
                     viewModel.clearSearch()
@@ -1302,6 +1408,19 @@ private struct SearchControls: View {
                 .buttonStyle(.bordered)
                 .fixedSize()
                 .accessibilityLabel("Clear")
+            }
+
+            if !isCompactLayout {
+                Button {
+                    viewModel.performSearch()
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                        .font(.system(size: 16, weight: .semibold))
+                        .frame(width: 36, height: 36)
+                }
+                .buttonStyle(.borderedProminent)
+                .fixedSize()
+                .accessibilityLabel("Search")
             }
         }
     }

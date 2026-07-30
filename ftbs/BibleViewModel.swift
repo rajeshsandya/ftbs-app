@@ -11,6 +11,7 @@ final class BibleViewModel: ObservableObject {
     @Published var selectedChapterNumber: Int = 1
     @Published var searchQuery = ""
     @Published var searchScope: SearchScope = .currentBook
+    @Published var searchBookNumber: Int = 1
     @Published var searchResults: [BibleSearchResult] = []
     @Published var showingSearchResults = false
     @Published var fontSize: Double = 17
@@ -19,6 +20,19 @@ final class BibleViewModel: ObservableObject {
     @Published var highlightedVerseNumber: Int?
     @Published var selectedVerseNumbers: Set<Int> = []
     @Published private(set) var verseAnnotations: [String: VerseAnnotation] = [:]
+    @Published var isSpeaking = false
+    @Published var speechSpeed: Double = 0.95 {
+        didSet {
+            guard oldValue != speechSpeed else { return }
+            refreshSpeechConfiguration()
+        }
+    }
+    @Published var selectedSpeechVoiceIdentifier: String? {
+        didSet {
+            guard oldValue != selectedSpeechVoiceIdentifier else { return }
+            refreshSpeechConfiguration()
+        }
+    }
 
     private var didLoad = false
     private var bibles: [BibleLanguage: BibleDocument] = [:]
@@ -27,12 +41,29 @@ final class BibleViewModel: ObservableObject {
     private var crossReferences: [String: [String]] = [:]
     private var backHistory: [NavigationLocation] = []
     private var forwardHistory: [NavigationLocation] = []
+    private let speechManager = BibleSpeechManager()
+    private var speechStateCancellables = Set<AnyCancellable>()
+    private var lastSpeechRequest: SpeechRequest?
+
+    private enum SpeechRequest: Equatable {
+        case chapter(BibleChapter)
+        case verse(Int)
+    }
 
     init() {
         let storedDefaultLanguage = Self.loadDefaultLanguage()
         selectedLanguage = storedDefaultLanguage
         defaultLanguage = storedDefaultLanguage
         verseAnnotations = Self.loadVerseAnnotations()
+        selectedSpeechVoiceIdentifier = nil
+        searchBookNumber = selectedBookNumber
+
+        speechManager.$isSpeaking
+            .receive(on: RunLoop.main)
+            .sink { [weak self] isSpeaking in
+                self?.isSpeaking = isSpeaking
+            }
+            .store(in: &speechStateCancellables)
     }
 
     var books: [BibleBook] {
@@ -60,6 +91,60 @@ final class BibleViewModel: ObservableObject {
             return "FTBS Bible"
         }
         return "\(selectedBook.bname) \(selectedChapter.cnumber)"
+    }
+
+    var currentSpeechText: String? {
+        selectedChapter.map { chapterSpeechText(for: $0) }
+    }
+
+    var speechIsPaused: Bool {
+        speechManager.isPaused
+    }
+
+    var availableSpeechVoiceOptions: [SpeechVoiceOption] {
+        speechManager.availableVoiceOptions(for: selectedLanguage)
+    }
+
+    func toggleSpeechPlayback() {
+        if speechIsPaused {
+            speechManager.resume()
+            return
+        }
+
+        if isSpeaking {
+            speechManager.pause()
+            return
+        }
+
+        startSpeakingCurrentChapter()
+    }
+
+    func selectSpeechVoice(identifier: String?) {
+        let validIdentifiers = Set(availableSpeechVoiceOptions.map(\.identifier))
+
+        if let identifier, validIdentifiers.contains(identifier) {
+            selectedSpeechVoiceIdentifier = identifier
+        } else {
+            selectedSpeechVoiceIdentifier = nil
+        }
+    }
+
+    func refreshSpeechConfiguration() {
+        let shouldResumeSpeech = isSpeaking || speechIsPaused
+        let wasPaused = speechIsPaused
+        let request = lastSpeechRequest
+
+        guard shouldResumeSpeech else { return }
+
+        speechManager.stop()
+        updateSpeechVoiceSelection()
+
+        if let request {
+            playSpeech(for: request)
+            if wasPaused {
+                speechManager.pause()
+            }
+        }
     }
 
     var availableParallelLanguages: [BibleLanguage] {
@@ -110,6 +195,7 @@ final class BibleViewModel: ObservableObject {
                let firstChapter = firstBook.chapters.first {
                 selectedBookNumber = firstBook.bnumber
                 selectedChapterNumber = firstChapter.cnumber
+                searchBookNumber = selectedBookNumber
                 clearNavigationHistory()
             }
         } catch {
@@ -120,14 +206,25 @@ final class BibleViewModel: ObservableObject {
     }
 
     func selectLanguage(_ language: BibleLanguage) {
+        selectLanguage(language, preserveSpeechPlayback: false)
+    }
+
+    func selectLanguage(_ language: BibleLanguage, preserveSpeechPlayback: Bool) {
         guard selectedLanguage != language else { return }
+        if !preserveSpeechPlayback {
+            stopSpeaking(clearLastSpeechRequest: true)
+        }
         selectedLanguage = language
         updateParallelLanguageSelection()
+        updateSpeechVoiceSelection()
         showingSearchResults = false
         searchResults = []
+        searchQuery = ""
+        searchScope = .entireBible
         clearNavigationHistory()
         clearVerseSelections()
         ensureValidSelection()
+        searchBookNumber = selectedBookNumber
     }
 
     func selectDefaultLanguage(_ language: BibleLanguage) {
@@ -153,7 +250,8 @@ final class BibleViewModel: ObservableObject {
                 highlightedVerseNumber: nil,
                 showingSearchResults: false,
                 searchQuery: searchQuery,
-                searchScope: searchScope
+                searchScope: searchScope,
+                searchBookNumber: searchBookNumber
             ),
             recordHistory: true
         )
@@ -171,7 +269,8 @@ final class BibleViewModel: ObservableObject {
                 highlightedVerseNumber: nil,
                 showingSearchResults: false,
                 searchQuery: searchQuery,
-                searchScope: searchScope
+                searchScope: searchScope,
+                searchBookNumber: searchBookNumber
             ),
             recordHistory: true
         )
@@ -191,7 +290,8 @@ final class BibleViewModel: ObservableObject {
                     highlightedVerseNumber: nil,
                     showingSearchResults: false,
                     searchQuery: searchQuery,
-                    searchScope: searchScope
+                    searchScope: searchScope,
+                    searchBookNumber: searchBookNumber
                 ),
                 recordHistory: true
             )
@@ -207,7 +307,8 @@ final class BibleViewModel: ObservableObject {
                     highlightedVerseNumber: nil,
                     showingSearchResults: false,
                     searchQuery: searchQuery,
-                    searchScope: searchScope
+                    searchScope: searchScope,
+                    searchBookNumber: searchBookNumber
                 ),
                 recordHistory: true
             )
@@ -228,7 +329,8 @@ final class BibleViewModel: ObservableObject {
                     highlightedVerseNumber: nil,
                     showingSearchResults: false,
                     searchQuery: searchQuery,
-                    searchScope: searchScope
+                        searchScope: searchScope,
+                        searchBookNumber: searchBookNumber
                 ),
                 recordHistory: true
             )
@@ -244,11 +346,34 @@ final class BibleViewModel: ObservableObject {
                     highlightedVerseNumber: nil,
                     showingSearchResults: false,
                     searchQuery: searchQuery,
-                    searchScope: searchScope
+                    searchScope: searchScope,
+                    searchBookNumber: searchBookNumber
                 ),
                 recordHistory: true
             )
         }
+    }
+
+    func chapterSpeechText(for chapter: BibleChapter) -> String {
+        guard let selectedBook else { return chapter.verses.map(verseSpeechLine(_:)).joined(separator: " ") }
+
+        let verses = chapter.verses.map(verseSpeechLine(_:)).joined(separator: " ")
+        return "\(selectedBook.bname) chapter \(chapter.cnumber). \(verses)".trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    func verseSpeechText(for verseNumber: Int) -> String? {
+        guard let verse = verse(for: selectedLanguage, bookNumber: selectedBookNumber, chapterNumber: selectedChapterNumber, verseNumber: verseNumber) else {
+            return nil
+        }
+
+        let bookName = selectedBook?.bname ?? "Bible"
+        return "\(bookName) chapter \(selectedChapterNumber). \(verse.displayText)"
+    }
+
+    func speechText(for verseNumbers: [Int]) -> String? {
+        let texts = verseNumbers.compactMap { verseSpeechText(for: $0) }
+        guard !texts.isEmpty else { return nil }
+        return texts.joined(separator: " ")
     }
 
     func performSearch() {
@@ -259,26 +384,25 @@ final class BibleViewModel: ObservableObject {
             return
         }
 
-        navigate(
-            to: NavigationLocation(
-                language: selectedLanguage,
-                bookNumber: selectedBookNumber,
-                chapterNumber: selectedChapterNumber,
-                verseNumber: nil,
-                selectedVerseNumbers: [],
-                highlightedVerseNumber: nil,
-                showingSearchResults: true,
-                searchQuery: searchQuery,
-                searchScope: searchScope
-            ),
-            recordHistory: true
-        )
+        if !showingSearchResults, let current = currentLocation {
+            backHistory.append(current)
+            forwardHistory.removeAll()
+        }
+
+        if !showingSearchResults {
+            searchBookNumber = selectedBookNumber
+        }
+
+        searchResults = searchResults(for: trimmedQuery, scope: searchScope, language: selectedLanguage)
+        showingSearchResults = true
+        clearVerseSelections()
     }
 
     func clearSearch() {
         searchQuery = ""
         searchResults = []
         showingSearchResults = false
+        searchBookNumber = selectedBookNumber
         clearVerseSelections()
     }
 
@@ -298,7 +422,8 @@ final class BibleViewModel: ObservableObject {
                 highlightedVerseNumber: result.verseNumber,
                 showingSearchResults: false,
                 searchQuery: searchQuery,
-                searchScope: searchScope
+                searchScope: searchScope,
+                searchBookNumber: searchBookNumber
             ),
             recordHistory: true
         )
@@ -496,6 +621,56 @@ final class BibleViewModel: ObservableObject {
         }
     }
 
+    private func updateSpeechVoiceSelection() {
+        let availableOptions = availableSpeechVoiceOptions
+        guard !availableOptions.isEmpty else {
+            selectedSpeechVoiceIdentifier = nil
+            return
+        }
+
+        if let selectedSpeechVoiceIdentifier,
+           availableOptions.contains(where: { $0.identifier == selectedSpeechVoiceIdentifier }) {
+            return
+        }
+
+        selectedSpeechVoiceIdentifier = availableOptions.first?.identifier
+    }
+
+    private func startSpeakingCurrentChapter() {
+        guard let chapter = selectedChapter else { return }
+        playSpeech(for: .chapter(chapter))
+    }
+
+    private func playSpeech(for request: SpeechRequest) {
+        let text: String
+
+        switch request {
+        case .chapter(let chapter):
+            text = chapterSpeechText(for: chapter)
+        case .verse(let verseNumber):
+            text = verseText(for: verseNumber)
+        }
+
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        lastSpeechRequest = request
+        speechManager.speak(
+            text: trimmed,
+            language: selectedLanguage,
+            voiceIdentifier: selectedSpeechVoiceIdentifier,
+            rate: speechSpeed
+        )
+    }
+
+    private func stopSpeaking(clearLastSpeechRequest: Bool = false) {
+        speechManager.stop()
+
+        if clearLastSpeechRequest {
+            lastSpeechRequest = nil
+        }
+    }
+
     private func clearVerseSelections() {
         selectedVerseNumbers.removeAll()
         highlightedVerseNumber = nil
@@ -543,7 +718,8 @@ final class BibleViewModel: ObservableObject {
             highlightedVerseNumber: highlightedVerseNumber,
             showingSearchResults: showingSearchResults,
             searchQuery: searchQuery,
-            searchScope: searchScope
+            searchScope: searchScope,
+            searchBookNumber: searchBookNumber
         )
     }
 
@@ -560,6 +736,14 @@ final class BibleViewModel: ObservableObject {
     }
 
     private func apply(location: NavigationLocation) {
+        let didChangeContent = selectedLanguage != location.language
+            || selectedBookNumber != location.bookNumber
+            || selectedChapterNumber != location.chapterNumber
+
+        if didChangeContent {
+            stopSpeaking()
+        }
+
         if selectedLanguage != location.language {
             selectedLanguage = location.language
             updateParallelLanguageSelection()
@@ -570,6 +754,7 @@ final class BibleViewModel: ObservableObject {
         showingSearchResults = location.showingSearchResults
         searchQuery = location.searchQuery
         searchScope = location.searchScope
+        searchBookNumber = location.showingSearchResults ? location.searchBookNumber : selectedBookNumber
         searchResults = location.showingSearchResults ? searchResults(for: location.searchQuery, scope: location.searchScope, language: location.language) : []
         clearVerseSelections()
 
@@ -598,7 +783,8 @@ final class BibleViewModel: ObservableObject {
             },
             showingSearchResults: location.showingSearchResults,
             searchQuery: location.searchQuery,
-            searchScope: location.searchScope
+            searchScope: location.searchScope,
+            searchBookNumber: location.searchBookNumber
         )
     }
 
@@ -618,7 +804,7 @@ final class BibleViewModel: ObservableObject {
         let targetBooks: [BibleBook]
         switch scope {
         case .currentBook:
-            targetBooks = languageBooks.first(where: { $0.bnumber == selectedBookNumber }).map { [$0] } ?? []
+            targetBooks = languageBooks.first(where: { $0.bnumber == searchBookNumber }).map { [$0] } ?? []
         case .oldTestament:
             targetBooks = languageBooks.filter { $0.testament == .old }
         case .newTestament:
@@ -652,11 +838,15 @@ final class BibleViewModel: ObservableObject {
             .map(String.init)
             .filter { !$0.isEmpty }
 
-        return trimmedQuery.count >= 3 && !tokens.isEmpty
+        return trimmedQuery.count >= 2 && !tokens.isEmpty
     }
 
     private func verseTextBody(for verseNumber: Int) -> String? {
         verse(for: selectedLanguage, bookNumber: selectedBookNumber, chapterNumber: selectedChapterNumber, verseNumber: verseNumber)?.displayText
+    }
+
+    private func verseSpeechLine(_ verse: BibleVerse) -> String {
+        verse.displayText
     }
 
     private func updateParallelLanguageSelection() {
@@ -802,6 +992,7 @@ final class BibleViewModel: ObservableObject {
         let showingSearchResults: Bool
         let searchQuery: String
         let searchScope: SearchScope
+        let searchBookNumber: Int
 
         init(
             language: BibleLanguage,
@@ -812,7 +1003,8 @@ final class BibleViewModel: ObservableObject {
             highlightedVerseNumber: Int?,
             showingSearchResults: Bool = false,
             searchQuery: String = "",
-            searchScope: SearchScope = .currentBook
+            searchScope: SearchScope = .currentBook,
+            searchBookNumber: Int = 1
         ) {
             self.language = language
             self.bookNumber = bookNumber
@@ -823,6 +1015,7 @@ final class BibleViewModel: ObservableObject {
             self.showingSearchResults = showingSearchResults
             self.searchQuery = searchQuery
             self.searchScope = searchScope
+            self.searchBookNumber = searchBookNumber
         }
     }
 
